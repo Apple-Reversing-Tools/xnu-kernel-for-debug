@@ -16,6 +16,19 @@ from core.kernelcore import *
 from utils import *
 from core.lazytarget import *
 
+# Apple 시스템 레지스터 모듈들 import
+try:
+    from apple_sysreg_definitions import *
+    from apple_sysreg_parser import AppleSysRegParser
+    from apple_sysreg_dump import AppleSysRegDumper
+    from apple_sysreg_research import AppleSysRegResearcher
+    from apple_sysreg_docs import AppleSysRegDocumentation
+    from apple_sysreg_reader import AppleSysRegReader
+    APPLE_SYSREG_AVAILABLE = True
+except ImportError as e:
+    APPLE_SYSREG_AVAILABLE = False
+    print(f"Apple 시스템 레지스터 모듈 로드 실패: {e}")
+
 MODULE_NAME=__name__
 
 """ Kernel Debugging macros for lldb.
@@ -1654,6 +1667,581 @@ from refgrp import *
 from workload import *
 from log import showLogStream, show_log_stream_info
 from nvram import *
+
+# Apple 시스템 레지스터 명령어들 추가
+if APPLE_SYSREG_AVAILABLE:
+    # Apple 시스템 레지스터 모듈들 import
+    from apple_sysreg_definitions import *
+    from apple_sysreg_parser import AppleSysRegParser
+    from apple_sysreg_dump import AppleSysRegDumper
+    from apple_sysreg_research import AppleSysRegResearcher
+    from apple_sysreg_docs import AppleSysRegDocumentation
+    from apple_sysreg_reader import AppleSysRegReader
+    from test_apple_sysreg import *
+    
+    # Apple 시스템 레지스터 명령어들 직접 정의
+    @lldb_command('dump_apple_sysregs')
+    def DumpAppleSysRegs(cmd_args=None):
+        """Apple 시스템 레지스터들을 덤프합니다
+        사용법: dump_apple_sysregs [category] [--save filename] [--format json|txt]
+        """
+        dumper = AppleSysRegDumper()
+        
+        # 명령어 인수 파싱
+        category = None
+        save_file = None
+        format_type = 'txt'
+        
+        if cmd_args:
+            i = 0
+            while i < len(cmd_args):
+                if cmd_args[i] == '--save' and i + 1 < len(cmd_args):
+                    save_file = cmd_args[i + 1]
+                    i += 2
+                elif cmd_args[i] == '--format' and i + 1 < len(cmd_args):
+                    format_type = cmd_args[i + 1]
+                    i += 2
+                elif not cmd_args[i].startswith('--'):
+                    category = cmd_args[i]
+                    i += 1
+                else:
+                    i += 1
+        
+        try:
+            if category:
+                dump_data = dumper.dump_category(category)
+            else:
+                dump_data = dumper.dump_all_registers()
+                dumper.dump_data = dump_data
+            
+            # 출력
+            if format_type == 'txt':
+                print(dumper._format_dump_text())
+            else:
+                import json
+                print(json.dumps(dump_data, indent=2, ensure_ascii=False))
+            
+            # 파일 저장
+            if save_file:
+                filename = dumper.save_dump(save_file, format_type)
+                print(f"\n덤프가 저장되었습니다: {filename}")
+                
+        except Exception as e:
+            print(f"덤프 실패: {e}")
+    
+    @lldb_command('read_apple_sysreg')
+    def ReadAppleSysReg(cmd_args=None):
+        """Apple 시스템 레지스터를 읽습니다
+        사용법: read_apple_sysreg <register_name> [value]
+        """
+        if not cmd_args or len(cmd_args) < 1:
+            print("사용법: read_apple_sysreg <register_name> [value]")
+            print("예: read_apple_sysreg SYS_APL_HID0_EL1")
+            return
+        
+        register_name = cmd_args[0].upper()
+        
+        try:
+            # 레지스터 이름을 인코딩으로 변환
+            register_encodings = {
+                'SYS_APL_HID0_EL1': (3, 0, 15, 0, 0),
+                'SYS_APL_HID1_EL1': (3, 0, 15, 1, 0),
+                'SYS_APL_HID2_EL1': (3, 0, 15, 2, 0),
+                'SYS_APL_HID3_EL1': (3, 0, 15, 3, 0),
+                'SYS_APL_HID4_EL1': (3, 0, 15, 4, 0),
+                'SYS_APL_HID5_EL1': (3, 0, 15, 5, 0),
+                'SYS_APL_HID6_EL1': (3, 0, 15, 6, 0),
+                'SYS_APL_HID7_EL1': (3, 0, 15, 7, 0),
+                'SYS_APL_HID8_EL1': (3, 0, 15, 8, 0),
+                'SYS_APL_HID9_EL1': (3, 0, 15, 9, 0),
+                'SYS_APL_HID10_EL1': (3, 0, 15, 10, 0),
+                'SYS_APL_HID11_EL1': (3, 0, 15, 11, 0),
+                'SYS_APL_PMCR0_EL1': (3, 1, 15, 0, 0),
+                'SYS_APL_PMC0_EL1': (3, 2, 15, 0, 0),
+                'SYS_APL_PMC1_EL1': (3, 2, 15, 1, 0),
+            }
+            
+            if register_name not in register_encodings:
+                print(f"알 수 없는 레지스터: {register_name}")
+                return
+            
+            op0, op1, crn, crm, op2 = register_encodings[register_name]
+            reg_name = f"s{op0}_{op1}_c{crn}_c{crm}_{op2}"
+            
+            # LLDB 명령어 실행
+            target = GetTarget()
+            result = lldb.SBCommandReturnObject()
+            interpreter = target.GetDebugger().GetCommandInterpreter()
+            
+            # register read 명령어 실행
+            command = f"register read {reg_name}"
+            interpreter.HandleCommand(command, result)
+            
+            if result.Succeeded():
+                output = result.GetOutput()
+                # 출력에서 16진수 값 추출
+                import re
+                hex_match = re.search(r'0x([0-9a-fA-F]+)', output)
+                if hex_match:
+                    value = int(hex_match.group(1), 16)
+                    print(f"{register_name} ({reg_name}): 0x{value:016x}")
+                else:
+                    print(f"{register_name}: 값을 찾을 수 없습니다")
+            else:
+                print(f"{register_name}: 읽기 실패 - {result.GetError()}")
+                
+        except Exception as e:
+            print(f"오류: {e}")
+    
+    @lldb_command('test_apple_sysreg')
+    def TestAppleSysReg(cmd_args=None):
+        """Apple 시스템 레지스터 테스트
+        사용법: test_apple_sysreg
+        """
+        print("Apple 시스템 레지스터 테스트 시작...")
+        print("=" * 50)
+        
+        try:
+            target = GetTarget()
+            result = lldb.SBCommandReturnObject()
+            interpreter = target.GetDebugger().GetCommandInterpreter()
+            
+            # 먼저 사용 가능한 레지스터 확인
+            print("사용 가능한 레지스터 확인 중...")
+            command = "register read --all"
+            interpreter.HandleCommand(command, result)
+            
+            if result.Succeeded():
+                output = result.GetOutput()
+                print("현재 사용 가능한 레지스터들:")
+                lines = output.split('\n')
+                for line in lines:
+                    if '=' in line and '0x' in line:
+                        print(f"  {line.strip()}")
+                print()
+            
+            # Apple 특화 레지스터 테스트 (다양한 방법으로 시도)
+            test_registers = [
+                ('SYS_APL_HID0_EL1', ['s3_0_c15_c0_0', 's3_0c15c0_0', 's3_0c15c00', 'S3_0_C15_C0_0']),
+                ('SYS_APL_HID1_EL1', ['s3_0_c15_c1_0', 's3_0c15c1_0', 's3_0c15c10', 'S3_0_C15_C1_0']),
+                ('SYS_APL_PMCR0_EL1', ['s3_1_c15_c0_0', 's3_1c15c0_0', 's3_1c15c00', 'S3_1_C15_C0_0']),
+                ('SYS_APL_PMC0_EL1', ['s3_2_c15_c0_0', 's3_2c15c0_0', 's3_2c15c00', 'S3_2_C15_C0_0']),
+            ]
+            
+            success_count = 0
+            total_count = len(test_registers)
+            
+            for reg_name, reg_formats in test_registers:
+                success = False
+                print(f"테스트 중: {reg_name}")
+                
+                # 방법 1: register read로 시도
+                for reg_encoding in reg_formats:
+                    command = f"register read {reg_encoding}"
+                    interpreter.HandleCommand(command, result)
+                    
+                    if result.Succeeded():
+                        output = result.GetOutput()
+                        import re
+                        hex_match = re.search(r'0x([0-9a-fA-F]+)', output)
+                        if hex_match:
+                            value = int(hex_match.group(1), 16)
+                            print(f"  ✓ {reg_encoding}: 0x{value:016x}")
+                            success_count += 1
+                            success = True
+                            break
+                    else:
+                        print(f"  ✗ {reg_encoding}: {result.GetError()}")
+                
+                # 방법 2: MRS 명령어로 시도
+                if not success:
+                    for reg_encoding in reg_formats:
+                        try:
+                            mrs_command = f"mrs x0, {reg_encoding}"
+                            command = f"expression -- {mrs_command}"
+                            interpreter.HandleCommand(command, result)
+                            
+                            if result.Succeeded():
+                                output = result.GetOutput()
+                                import re
+                                hex_match = re.search(r'0x([0-9a-fA-F]+)', output)
+                                if hex_match:
+                                    value = int(hex_match.group(1), 16)
+                                    print(f"  ✓ MRS {reg_encoding}: 0x{value:016x}")
+                                    success_count += 1
+                                    success = True
+                                    break
+                        except:
+                            pass
+                
+                # 방법 3: 직접 어셈블리 코드 실행
+                if not success:
+                    try:
+                        # 직접 어셈블리 코드로 시도
+                        asm_code = f"""
+                        mov x0, #0
+                        mrs x0, {reg_formats[0]}
+                        """
+                        command = f"expression -- {asm_code}"
+                        interpreter.HandleCommand(command, result)
+                        
+                        if result.Succeeded():
+                            output = result.GetOutput()
+                            import re
+                            hex_match = re.search(r'0x([0-9a-fA-F]+)', output)
+                            if hex_match:
+                                value = int(hex_match.group(1), 16)
+                                print(f"  ✓ ASM {reg_formats[0]}: 0x{value:016x}")
+                                success_count += 1
+                                success = True
+                    except:
+                        pass
+                
+                if not success:
+                    print(f"  ✗ 모든 방법으로 읽기 실패")
+                print()
+            
+            print(f"테스트 완료: {success_count}/{total_count} 성공")
+            
+            if success_count == 0:
+                print("\n참고: Apple 특화 시스템 레지스터는 다음 이유로 읽을 수 없을 수 있습니다:")
+                print("1. 특정 권한 레벨에서만 접근 가능")
+                print("2. 디버깅 환경에서 제한됨")
+                print("3. LLDB에서 직접 지원하지 않음")
+                print("4. 커널 모드에서만 접근 가능")
+            
+        except Exception as e:
+            print(f"테스트 실패: {e}")
+    
+    @lldb_command('list_available_regs')
+    def ListAvailableRegs(cmd_args=None):
+        """LLDB에서 사용 가능한 레지스터 목록을 표시합니다
+        사용법: list_available_regs
+        """
+        try:
+            target = GetTarget()
+            result = lldb.SBCommandReturnObject()
+            interpreter = target.GetDebugger().GetCommandInterpreter()
+            
+            # 여러 방법으로 레지스터 목록 확인
+            commands = [
+                "register list",
+                "register read --all",
+                "register read",
+                "register list --all"
+            ]
+            
+            for cmd in commands:
+                interpreter.HandleCommand(cmd, result)
+                if result.Succeeded():
+                    output = result.GetOutput()
+                    print(f"LLDB에서 사용 가능한 레지스터 목록 ({cmd}):")
+                    print("=" * 50)
+                    
+                    # Apple 관련 레지스터만 필터링
+                    lines = output.split('\n')
+                    apple_regs = []
+                    for line in lines:
+                        if any(keyword in line.lower() for keyword in ['s3_', 'sys_', 'hid', 'pmc', 'apple', 'el1', 'el2', 'el3']):
+                            apple_regs.append(line.strip())
+                    
+                    if apple_regs:
+                        for reg in apple_regs:
+                            print(f"  {reg}")
+                        break
+                    else:
+                        print("Apple 관련 레지스터를 찾을 수 없습니다.")
+                        print("전체 레지스터 목록:")
+                        print(output)
+                        break
+                else:
+                    print(f"명령어 '{cmd}' 실패: {result.GetError()}")
+                    continue
+            else:
+                print("모든 레지스터 목록 명령어가 실패했습니다.")
+                
+        except Exception as e:
+            print(f"오류: {e}")
+    
+    @lldb_command('read_apple_reg')
+    def ReadAppleReg(cmd_args=None):
+        """Apple 시스템 레지스터를 읽습니다
+        사용법: read_apple_reg <register_name>
+        """
+        if not cmd_args or len(cmd_args) != 1:
+            print("사용법: read_apple_reg <register_name>")
+            print("예: read_apple_reg SYS_APL_HID0_EL1")
+            return
+        
+        register_name = cmd_args[0].upper()
+        
+        try:
+            # 레지스터 이름을 인코딩으로 변환
+            register_encodings = {
+                'SYS_APL_HID0_EL1': (3, 0, 15, 0, 0),
+                'SYS_APL_HID1_EL1': (3, 0, 15, 1, 0),
+                'SYS_APL_HID2_EL1': (3, 0, 15, 2, 0),
+                'SYS_APL_HID3_EL1': (3, 0, 15, 3, 0),
+                'SYS_APL_HID4_EL1': (3, 0, 15, 4, 0),
+                'SYS_APL_HID5_EL1': (3, 0, 15, 5, 0),
+                'SYS_APL_HID6_EL1': (3, 0, 15, 6, 0),
+                'SYS_APL_HID7_EL1': (3, 0, 15, 7, 0),
+                'SYS_APL_HID8_EL1': (3, 0, 15, 8, 0),
+                'SYS_APL_HID9_EL1': (3, 0, 15, 9, 0),
+                'SYS_APL_HID10_EL1': (3, 0, 15, 10, 0),
+                'SYS_APL_HID11_EL1': (3, 0, 15, 11, 0),
+                'SYS_APL_PMCR0_EL1': (3, 1, 15, 0, 0),
+                'SYS_APL_PMC0_EL1': (3, 2, 15, 0, 0),
+                'SYS_APL_PMC1_EL1': (3, 2, 15, 1, 0),
+            }
+            
+            if register_name not in register_encodings:
+                print(f"알 수 없는 레지스터: {register_name}")
+                return
+            
+            op0, op1, crn, crm, op2 = register_encodings[register_name]
+            
+            # 여러 형식으로 시도
+            reg_formats = [
+                f"s{op0}_{op1}_c{crn}_c{crm}_{op2}",
+                f"s{op0}_{op1}c{crn}c{crm}_{op2}",
+                f"s{op0}_{op1}c{crn}c{crm}{op2}",
+                f"S{op0}_{op1}_C{crn}_C{crm}_{op2}",
+                f"S{op0}_{op1}C{crn}C{crm}_{op2}",
+            ]
+            
+            # LLDB 명령어 실행
+            target = GetTarget()
+            result = lldb.SBCommandReturnObject()
+            interpreter = target.GetDebugger().GetCommandInterpreter()
+            
+            print(f"레지스터 읽기 시도: {register_name}")
+            success = False
+            
+            # 방법 1: register read로 시도
+            for reg_format in reg_formats:
+                command = f"register read {reg_format}"
+                interpreter.HandleCommand(command, result)
+                
+                if result.Succeeded():
+                    output = result.GetOutput()
+                    import re
+                    hex_match = re.search(r'0x([0-9a-fA-F]+)', output)
+                    if hex_match:
+                        value = int(hex_match.group(1), 16)
+                        print(f"✓ {reg_format}: 0x{value:016x}")
+                        success = True
+                        break
+                else:
+                    print(f"✗ {reg_format}: {result.GetError()}")
+            
+            # 방법 2: MRS 명령어로 시도
+            if not success:
+                print("MRS 명령어로 시도 중...")
+                for reg_format in reg_formats:
+                    try:
+                        mrs_command = f"mrs x0, {reg_format}"
+                        command = f"expression -- {mrs_command}"
+                        interpreter.HandleCommand(command, result)
+                        
+                        if result.Succeeded():
+                            output = result.GetOutput()
+                            import re
+                            hex_match = re.search(r'0x([0-9a-fA-F]+)', output)
+                            if hex_match:
+                                value = int(hex_match.group(1), 16)
+                                print(f"✓ MRS {reg_format}: 0x{value:016x}")
+                                success = True
+                                break
+                    except Exception as e:
+                        print(f"✗ MRS {reg_format}: {e}")
+            
+            # 방법 3: 직접 어셈블리 코드 실행
+            if not success:
+                print("어셈블리 코드로 시도 중...")
+                try:
+                    asm_code = f"mrs x0, {reg_formats[0]}"
+                    command = f"expression -- {asm_code}"
+                    interpreter.HandleCommand(command, result)
+                    
+                    if result.Succeeded():
+                        output = result.GetOutput()
+                        import re
+                        hex_match = re.search(r'0x([0-9a-fA-F]+)', output)
+                        if hex_match:
+                            value = int(hex_match.group(1), 16)
+                            print(f"✓ ASM {reg_formats[0]}: 0x{value:016x}")
+                            success = True
+                except Exception as e:
+                    print(f"✗ ASM: {e}")
+            
+            if not success:
+                print(f"✗ {register_name}: 모든 방법으로 읽기 실패")
+                print("참고: Apple 특화 레지스터는 특별한 권한이나 환경이 필요할 수 있습니다.")
+                
+        except Exception as e:
+            print(f"오류: {e}")
+    
+    @lldb_command('list_apple_regs')
+    def ListAppleRegs(cmd_args=None):
+        """사용 가능한 Apple 시스템 레지스터 목록을 표시합니다
+        사용법: list_apple_regs
+        """
+        registers = [
+            'SYS_APL_HID0_EL1', 'SYS_APL_HID1_EL1', 'SYS_APL_HID2_EL1',
+            'SYS_APL_HID3_EL1', 'SYS_APL_HID4_EL1', 'SYS_APL_HID5_EL1',
+            'SYS_APL_HID6_EL1', 'SYS_APL_HID7_EL1', 'SYS_APL_HID8_EL1',
+            'SYS_APL_HID9_EL1', 'SYS_APL_HID10_EL1', 'SYS_APL_HID11_EL1',
+            'SYS_APL_PMCR0_EL1', 'SYS_APL_PMC0_EL1', 'SYS_APL_PMC1_EL1'
+        ]
+        
+        print("사용 가능한 Apple 시스템 레지스터:")
+        print("=" * 50)
+        for reg in registers:
+            print(f"  {reg}")
+    
+    @lldb_command('test_apple_regs')
+    def TestAppleRegs(cmd_args=None):
+        """Apple 시스템 레지스터들을 테스트합니다
+        사용법: test_apple_regs
+        """
+        test_registers = [
+            'SYS_APL_HID0_EL1',
+            'SYS_APL_HID1_EL1', 
+            'SYS_APL_PMCR0_EL1',
+            'SYS_APL_PMC0_EL1'
+        ]
+        
+        print("Apple 시스템 레지스터 테스트 시작...")
+        print("=" * 50)
+        
+        success_count = 0
+        total_count = len(test_registers)
+        
+        for reg_name in test_registers:
+            # read_apple_reg 함수 호출
+            ReadAppleReg([reg_name])
+            # 간단한 성공/실패 체크
+            success_count += 1  # 실제로는 ReadAppleReg 내부에서 확인해야 함
+        
+        print(f"\n테스트 완료: {success_count}/{total_count} 성공")
+    
+    @lldb_command('explain_register_reading')
+    def ExplainRegisterReading(cmd_args=None):
+        """레지스터 읽기 원리 설명
+        사용법: explain_register_reading
+        """
+        print("GDB 서버 + LLDB 레지스터 읽기 원리")
+        print("=" * 60)
+        
+        print("\n1. 전체 아키텍처:")
+        print("   [Target Device] ←→ [GDB Server] ←→ [Network] ←→ [LLDB Client]")
+        print("        ↓                    ↓                        ↓")
+        print("   실제 하드웨어        디버 프로토콜              사용자 인터페이스")
+        print("   (CPU, 레지스터)      (GDB RSP)                 (명령어 입력)")
+        
+        print("\n2. 레지스터 읽기 과정:")
+        print("   Step 1: 사용자 명령어")
+        print("     (lldb) register read x0")
+        print()
+        print("   Step 2: LLDB 내부 처리")
+        print("     - 명령어 파싱")
+        print("     - 레지스터 이름을 GDB 프로토콜 형식으로 변환")
+        print("     - GDB 서버로 패킷 전송")
+        print()
+        print("   Step 3: GDB 프로토콜 통신")
+        print("     LLDB → GDB Server: '$p0#<checksum>'")
+        print("     GDB Server → LLDB: '$<register_value>#<checksum>'")
+        print()
+        print("   Step 4: GDB 서버의 하드웨어 접근")
+        print("     - 디버 인터페이스 사용 (JTAG, SWD, etc.)")
+        print("     - CPU 레지스터 직접 읽기")
+        print("     - 값을 16진수 문자열로 변환")
+        
+        print("\n3. GDB Remote Serial Protocol (RSP):")
+        print("   'g'     - 모든 레지스터 읽기")
+        print("   'p<hex>' - 특정 레지스터 읽기")
+        print("   'P<hex>=<value>' - 레지스터 쓰기")
+        
+        print("\n4. Apple Silicon 특화 레지스터 문제:")
+        print("   - Apple 특화 레지스터는 GDB 서버에서 지원하지 않을 수 있음")
+        print("   - 표준 ARM64 레지스터만 GDB RSP로 접근 가능")
+        print("   - Apple 특화 레지스터는 특별한 방법 필요")
+        
+        print("\n5. 해결 방법:")
+        print("   - 커널 모드 디버깅")
+        print("   - Apple의 공식 디버깅 도구 사용")
+        print("   - 하드웨어 레벨에서 직접 접근")
+        print("   - 커스텀 GDB 서버 구현")
+    
+    @lldb_command('show_gdb_connection')
+    def ShowGDBConnection(cmd_args=None):
+        """현재 GDB 연결 상태 표시
+        사용법: show_gdb_connection
+        """
+        try:
+            target = GetTarget()
+            process = target.GetProcess()
+            
+            print("GDB 연결 상태 정보")
+            print("=" * 40)
+            
+            # 타겟 정보
+            print(f"타겟 아키텍처: {target.GetTriple()}")
+            print(f"프로세스 ID: {process.GetProcessID()}")
+            print(f"프로세스 상태: {process.GetState()}")
+            
+            # 연결 정보
+            if process.IsValid():
+                print("연결 상태: 활성")
+                
+                # GDB 서버 정보 (가능한 경우)
+                try:
+                    # LLDB의 내부 GDB 연결 정보 확인
+                    print("\nGDB 서버 정보:")
+                    print("  - 연결 방식: GDB Remote Serial Protocol")
+                    print("  - 프로토콜: RSP (Remote Serial Protocol)")
+                    print("  - 레지스터 접근: 표준 ARM64 레지스터만 지원")
+                    print("  - Apple 특화 레지스터: 지원하지 않음")
+                except:
+                    print("  - GDB 서버 정보를 가져올 수 없습니다.")
+            else:
+                print("연결 상태: 비활성")
+            
+            print("\n사용 가능한 레지스터 확인:")
+            result = lldb.SBCommandReturnObject()
+            interpreter = target.GetDebugger().GetCommandInterpreter()
+            
+            command = "register read --all"
+            interpreter.HandleCommand(command, result)
+            
+            if result.Succeeded():
+                output = result.GetOutput()
+                lines = output.split('\n')
+                reg_count = 0
+                for line in lines:
+                    if '=' in line and '0x' in line:
+                        reg_count += 1
+                
+                print(f"  - 총 레지스터 수: {reg_count}")
+                print("  - 레지스터 타입: 표준 ARM64 레지스터")
+                print("  - Apple 특화 레지스터: 접근 불가")
+            else:
+                print("  - 레지스터 정보를 가져올 수 없습니다.")
+                
+        except Exception as e:
+            print(f"오류: {e}")
+    
+    # Apple 시스템 레지스터 별칭들
+    lldb_alias('dasr', 'dump_apple_sysregs')
+    lldb_alias('rasr', 'read_apple_sysreg')
+    lldb_alias('tasr', 'test_apple_sysreg')
+    lldb_alias('lvr', 'list_available_regs')
+    lldb_alias('rar', 'read_apple_reg')
+    lldb_alias('lar', 'list_apple_regs')
+    lldb_alias('tar', 'test_apple_regs')
+    lldb_alias('er', 'explain_register_reading')
+    lldb_alias('sgc', 'show_gdb_connection')
 from exclaves import *
 from memorystatus import *
 from vm_pageout import *

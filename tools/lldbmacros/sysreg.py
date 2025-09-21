@@ -8,17 +8,46 @@
        _SYSREG_TO_DOCNAME_MAP
     3. Populate _SUPPORTED_SYSREGS list with target register
     
+    Apple Silicon System Register Support:
+    - Comprehensive Apple system register definitions and parsing
+    - Register dumping and analysis capabilities
+    - Research and enumeration tools
+    - Complete documentation system
+    
 """
 from xnu import *
 import os
 import sys
 import xml.etree.ElementTree as ET
 
+# Apple Silicon 시스템 레지스터 모듈들 import
+try:
+    from apple_sysreg_definitions import *
+    from apple_sysreg_parser import AppleSysRegParser
+    from apple_sysreg_dump import AppleSysRegDumper
+    from apple_sysreg_research import AppleSysRegResearcher
+    from apple_sysreg_docs import AppleSysRegDocumentation
+    APPLE_SYSREG_AVAILABLE = True
+except ImportError as e:
+    APPLE_SYSREG_AVAILABLE = False
+    print(f"Apple 시스템 레지스터 모듈 로드 실패: {e}")
+
 GREEN = '\033[0;32m'
 RED   = '\033[0;31m'
 NC    = '\033[0m'
 
 _SUPPORTED_SYSREGS = ['ESR_EL1']
+
+# Apple Silicon 시스템 레지스터 지원
+if APPLE_SYSREG_AVAILABLE:
+    # Apple 시스템 레지스터들을 지원 목록에 추가
+    APPLE_SUPPORTED_SYSREGS = [
+        'SYS_APL_HID0_EL1', 'SYS_APL_EHID0_EL1', 'SYS_APL_HID1_EL1', 'SYS_APL_EHID1_EL1',
+        'SYS_APL_PMCR0_EL1', 'SYS_APL_PMC0_EL1', 'SYS_APL_L2C_ERR_STS_EL1',
+        'SYS_APL_APRR_EL0', 'SYS_APL_APRR_EL1', 'SYS_APL_CTRR_CTL_EL1',
+        'SYS_APL_IPI_RR_LOCAL_EL1', 'SYS_APL_ACC_OVRD_EL1'
+    ]
+    _SUPPORTED_SYSREGS.extend(APPLE_SUPPORTED_SYSREGS)
 
 _SYSREG_DOC_PATH = os.path.dirname(os.path.abspath(__file__)) + '/sysregdoc/'
 
@@ -35,9 +64,11 @@ def DecodeSysreg(cmd_args=None):
     """ Print out human-understandable explanation of a system register value
         usage: decode_sysreg <sysreg> <value>
         example: decode_sysreg esr_el1 0x96000021
+                 decode_sysreg SYS_APL_HID0_EL1 0x1234567890abcdef
 
         supported registers:
         ESR_EL1
+        Apple Silicon registers (if available): SYS_APL_HID0_EL1, SYS_APL_PMCR0_EL1, etc.
     """
 
     ## For now, require exactly 2 arguments
@@ -50,7 +81,38 @@ def DecodeSysreg(cmd_args=None):
     if reg_name not in _SUPPORTED_SYSREGS:
         raise ArgumentError("{} is not supported".format(reg_name))
 
-    _SYSREG_TO_DECODE_FUNC_MAP[reg_name](reg_value)
+    # Apple Silicon 레지스터 처리
+    if APPLE_SYSREG_AVAILABLE and reg_name.startswith('SYS_APL_'):
+        try:
+            parser = AppleSysRegParser()
+            # 레지스터 이름으로 튜플 찾기
+            register_tuple = None
+            for reg_tuple, name in REGISTER_NAMES.items():
+                if name == reg_name:
+                    register_tuple = reg_tuple
+                    break
+            
+            if register_tuple:
+                # 실제 레지스터 값 읽기 (cmd_args[1]이 제공되지 않은 경우)
+                if len(cmd_args) == 1:
+                    actual_value = parser.read_register(register_tuple)
+                    if actual_value is not None:
+                        print(f"실제 레지스터 값: 0x{actual_value:016x}")
+                        parsed = parser.parse_register(register_tuple, actual_value)
+                        print(parser.format_parsed_register(parsed))
+                    else:
+                        print(f"레지스터 {reg_name}을 읽을 수 없습니다.")
+                else:
+                    # 제공된 값으로 파싱
+                    parsed = parser.parse_register(register_tuple, reg_value)
+                    print(parser.format_parsed_register(parsed))
+            else:
+                print(f"Apple 레지스터 {reg_name}을 찾을 수 없습니다.")
+        except Exception as e:
+            print(f"Apple 레지스터 디코딩 실패: {e}")
+    else:
+        # 기존 ARM 레지스터 처리
+        _SYSREG_TO_DECODE_FUNC_MAP[reg_name](reg_value)
 # EndMacro: decode_sysreg
 
 
